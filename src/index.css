@@ -1,0 +1,35 @@
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500;1,600&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@300;400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Cormorant Garamond", Georgia, serif;
+  --font-display: "Cormorant Garamond", Georgia, serif;
+  --font-mono: "JetBrains Mono", monospace;
+  --color-beige-back: #F4F0EA;
+  --color-beige-dark: #4A463F;
+  --color-beige-accent: #8C7A6B;
+}
+
+body {
+  background-color: #F4F0EA;
+  color: #4A463F;
+  font-family: var(--font-sans);
+  overflow-x: hidden;
+}
+
+/* Custom scrollbars matching the minimalist beige aesthetic */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: #EBE6DC;
+}
+::-webkit-scrollbar-thumb {
+  background: #BCB4A6;
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #9C9385;
+}
+

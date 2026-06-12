@@ -1,0 +1,6 @@
+{
+  "name": "地球模拟器",
+  "description": "A beautifully crafted 3D interactive globe with a warm paper-beige aesthetic, featuring generative soundscapes, great-circle flight paths, solar day/night terminator, and geography exploration challenges.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
