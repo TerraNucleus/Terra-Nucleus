@@ -449,7 +449,7 @@ export default function App() {
   };
 
   return (
-    <div id="root-theme-wrapper" className="min-h-screen bg-[#F4F0EA] flex flex-col text-[#4A463F] overflow-hidden antialiased relative">
+    <div id="root-theme-wrapper" className="h-screen max-h-screen bg-[#F4F0EA] flex flex-col text-[#4A463F] overflow-hidden antialiased relative">
       
       {/* Background Graticule/Texture Overlay */}
       <div className="absolute inset-0 opacity-[0.12] pointer-events-none z-0">
@@ -690,7 +690,7 @@ export default function App() {
                       <div className="grid grid-cols-2 gap-3 text-xs font-mono">
                         <div className="bg-[#FAF8F5] p-2 border border-[#4A463F]/10 rounded-none">
                           <span className="text-[#4A463F]/40 text-[9px] block mb-0.5 uppercase tracking-wider">{t.capitalLabel}</span>
-                          <span className="text-[#4A463F] font-semibold">{selectedMeta.capital}</span>
+                          <span className="text-[#4A463F] font-semibold truncate block">{selectedMeta.capital}</span>
                         </div>
                         <div className="bg-[#FAF8F5] p-2 border border-[#4A463F]/10 rounded-none">
                           <span className="text-[#4A463F]/40 text-[9px] block mb-0.5 uppercase tracking-wider">{t.latLongLabel}</span>
@@ -1616,9 +1616,6 @@ export default function App() {
                   </span>
                 </div>
               </div>
-              <div className="text-[10px] md:text-[11px] text-[#4A463F]/60 text-left md:text-right font-sans leading-normal">
-                Support & Ads: <a href="mailto:terranucleus@gmail.com" className="underline font-semibold font-mono text-[#4A463F]/80 hover:text-[#4A463F]">terranucleus@gmail.com</a>
-              </div>
             </div>
 
             {/* Quick Reset Settings Button */}
@@ -1643,6 +1640,50 @@ export default function App() {
               <RefreshCw size={11} />
               <span>{language === 'zh' ? "重置视图" : "DEFAULT VIEW"}</span>
             </button>
+          </div>
+
+          {/* Layer 2.5: Globe Metropolis Interactive Ad Billboard (Exactly same length, width & card contour style as bottom HUD) */}
+          <div className="relative z-10 w-full flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 bg-[#FCFAF6] border border-[#4A463F]/15 rounded-none p-4 md:py-3.5 md:px-5 font-mono text-[#4A463F] shadow-none select-none">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-none bg-[#C25B4E]/10 text-[#C25B4E] border border-dashed border-[#C25B4E]/30 animate-pulse shrink-0">
+                <Sparkles size={14} />
+              </div>
+              <div className="space-y-0.5">
+                <span className="text-[9px] text-[#C25B4E] block uppercase tracking-widest font-black">
+                  {language === 'zh' ? "⚡ 特惠黄金广告牌" : "⚡ EXCLUSIVE BILLBOARD"}
+                </span>
+                <span className="text-[12px] font-serif font-black italic text-[#4A463F] leading-none">
+                  {language === 'zh' ? "地信探索与寰宇地缘推广渠道计划" : "Terra Nucleus Global Advertising Station"}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 text-[11px] font-mono">
+              <div className="bg-[#FAF8F5] px-2.5 py-1.5 border border-[#4A463F]/10 flex items-center gap-1.5 rounded-none">
+                <span className="text-[#8C7A6B] text-[9px] font-bold uppercase tracking-wider">
+                  {language === 'zh' ? '合作 / 广告 / 支持:' : 'COLLAB / ADS / SUPPORT:'}
+                </span>
+                <a 
+                  href="mailto:terranucleus@gmail.com" 
+                  className="underline font-bold text-[#C25B4E] hover:text-[#4A463F] transition-all"
+                >
+                  terranucleus@gmail.com
+                </a>
+              </div>
+            </div>
+          </div>
+
+          {/* Simple caption text containing the official contact email below the billboard */}
+          <div className="relative z-10 w-full text-center mt-1.5 font-mono text-[10px] text-[#4A463F]/50 select-text pb-1">
+            <span>
+              {language === 'zh' ? '广告与支持 / Ads & Support: ' : 'Ads & Support: '}
+            </span>
+            <a 
+              href="mailto:terranucleus@gmail.com" 
+              className="font-bold underline text-[#C25B4E] hover:text-[#4A463F] transition-colors ml-1"
+            >
+              terranucleus@gmail.com
+            </a>
           </div>
         </section>
 

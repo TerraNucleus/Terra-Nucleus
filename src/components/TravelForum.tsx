@@ -403,11 +403,19 @@ export const TravelForum: React.FC<TravelForumProps> = ({
       try {
         return JSON.parse(saved);
       } catch (e) {
-        return PRESET_POSTS;
+        return [];
       }
     }
-    return PRESET_POSTS;
+    return [];
   });
+
+  const [isAdmin, setIsAdmin] = useState<boolean>(() => {
+    return localStorage.getItem('travel_admin_mode') === 'true';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('travel_admin_mode', String(isAdmin));
+  }, [isAdmin]);
 
   // Track post IDs created *by the current user session*
   const [userCreatedIds, setUserCreatedIds] = useState<string[]>(() => {
@@ -441,7 +449,7 @@ export const TravelForum: React.FC<TravelForumProps> = ({
 
   const [activeCategory, setActiveCategory] = useState<'all' | 'tip' | 'ask' | 'itinerary' | 'warning'>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterByGlobeFocus, setFilterByGlobeFocus] = useState(true);
+  const [filterByGlobeFocus, setFilterByGlobeFocus] = useState(false);
   
   // Submit thread form parameters
   const [isCreating, setIsCreating] = useState(false);
@@ -457,6 +465,38 @@ export const TravelForum: React.FC<TravelForumProps> = ({
   
   // Visual save flash notification
   const [showSaveNotification, setShowSaveNotification] = useState(false);
+
+  // Synchronize with server on mount and poll for updates so different accounts see each other's posts!
+  useEffect(() => {
+    let active = true;
+    const loadPostsFromServer = () => {
+      fetch("/api/posts")
+        .then(r => r.json())
+        .then(data => {
+          if (active && Array.isArray(data)) {
+            // Merge servers-side feed with client-side isLikedByUser state securely
+            setPosts(currentPosts => {
+              return data.map(serverPost => {
+                const existing = currentPosts.find(p => p.id === serverPost.id);
+                return {
+                  ...serverPost,
+                  isLikedByUser: existing ? existing.isLikedByUser : false
+                };
+              });
+            });
+          }
+        })
+        .catch(err => console.error("Error syncing with backend posts api:", err));
+    };
+
+    loadPostsFromServer();
+    const intervalId = setInterval(loadPostsFromServer, 5000);
+
+    return () => {
+      active = false;
+      clearInterval(intervalId);
+    };
+  }, []);
 
   // Persistence triggers
   useEffect(() => {
@@ -479,17 +519,28 @@ export const TravelForum: React.FC<TravelForumProps> = ({
 
   const handleLike = (postId: string) => {
     triggerAudioTick();
-    setPosts(prev => prev.map(post => {
-      if (post.id === postId) {
-        const isLiked = post.isLikedByUser;
+    const post = posts.find(p => p.id === postId);
+    if (!post) return;
+    const isLiked = post.isLikedByUser;
+
+    // Optimistically update locally
+    setPosts(prev => prev.map(p => {
+      if (p.id === postId) {
         return {
-          ...post,
-          likes: isLiked ? post.likes - 1 : post.likes + 1,
+          ...p,
+          likes: isLiked ? p.likes - 1 : p.likes + 1,
           isLikedByUser: !isLiked
         };
       }
-      return post;
+      return p;
     }));
+
+    // Send to server
+    fetch(`/api/posts/${postId}/like`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isLiked: !isLiked })
+    }).catch(err => console.error("Error syncing like on server:", err));
   };
 
   const handleCreatePost = (e: React.FormEvent) => {
@@ -514,8 +565,16 @@ export const TravelForum: React.FC<TravelForumProps> = ({
       assignedLandmark: assocLandmark || undefined
     };
 
+    // Optimistically update locally
     setPosts(prev => [newPost, ...prev]);
     setUserCreatedIds(prev => [brandNewId, ...prev]);
+
+    // Send to server
+    fetch("/api/posts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(newPost)
+    }).catch(err => console.error("Error posting new post on server:", err));
     
     // Reset form states
     setNewTitle('');
@@ -543,6 +602,7 @@ export const TravelForum: React.FC<TravelForumProps> = ({
     const post = posts.find(p => p.id === postId);
     const hasExpertMatch = post && post.category === 'ask' && post.replies.filter(r => r.isLocalExpert).length === 0;
 
+    // Optimistically update locally
     setPosts(prev => prev.map(p => {
       if (p.id === postId) {
         return {
@@ -552,6 +612,17 @@ export const TravelForum: React.FC<TravelForumProps> = ({
       }
       return p;
     }));
+
+    // Send reply to server
+    fetch(`/api/posts/${postId}/replies`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        author: newReply.author,
+        content: newReply.content,
+        isLocalExpert: false
+      })
+    }).catch(err => console.error("Error writing reply on server:", err));
 
     if (hasExpertMatch) {
       setTimeout(() => {
@@ -577,6 +648,7 @@ export const TravelForum: React.FC<TravelForumProps> = ({
           isLocalExpert: true
         };
 
+        // Update locally
         setPosts(currentFeed => currentFeed.map(p => {
           if (p.id === postId) {
             // Defensive: ensure multiple timeouts or StrictMode ticks do not add double experts
@@ -590,6 +662,18 @@ export const TravelForum: React.FC<TravelForumProps> = ({
           }
           return p;
         }));
+
+        // Send simulated expert reply to server as well
+        fetch(`/api/posts/${postId}/replies`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            author: simLocalReply.author,
+            content: simLocalReply.content,
+            isLocalExpert: true
+          })
+        }).catch(err => console.error("Error writing simulated expert reply on server:", err));
+
       }, 1500);
     }
 
@@ -609,8 +693,14 @@ export const TravelForum: React.FC<TravelForumProps> = ({
     triggerAudioTick();
     const targetId = confirmDeleteTarget;
 
+    // Optimistically update locally
     setPosts(prev => prev.filter(p => p.id !== targetId));
     setUserCreatedIds(prev => prev.filter(id => id !== targetId));
+
+    // Send DELETE to server
+    fetch(`/api/posts/${targetId}`, {
+      method: "DELETE"
+    }).catch(err => console.error("Error deleting post on server:", err));
     
     if (expandedPostId === targetId) {
       setExpandedPostId(null);
@@ -757,7 +847,7 @@ export const TravelForum: React.FC<TravelForumProps> = ({
             </div>
             
             <p className="text-xs text-[#4A463F]/90 leading-relaxed font-sans">
-              {t.deleteConfirm}
+              {userCreatedIds.includes(confirmDeleteTarget) ? t.deleteConfirm : t.deleteConfirmAdmin}
             </p>
 
             <div className="grid grid-cols-2 gap-2 font-mono text-[10px] uppercase tracking-wider">
@@ -832,9 +922,13 @@ export const TravelForum: React.FC<TravelForumProps> = ({
       </div>
 
       {showSaveNotification && (
-        <div className="fixed top-4 right-4 z-55 bg-[#4A463F] text-[#FCFAF6] border border-[#FCFAF6]/20 py-2.5 px-4 font-mono text-xs shadow-xl flex items-center gap-2 animate-fade-in">
-          <Check size={14} className="text-emerald-400" />
-          <span>{t.saveProfileSuccess}</span>
+        <div 
+          className="fixed md:bottom-6 md:right-6 bottom-4 left-4 right-4 md:left-auto bg-[#4A463F] text-[#FCFAF6] border border-[#FCFAF6]/30 py-3 px-4 font-mono text-xs shadow-2xl flex items-center gap-2.5 animate-fade-in rounded-none"
+          style={{ zIndex: 99999 }}
+        >
+          <div className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+          <Check size={14} className="text-emerald-400 flex-shrink-0" />
+          <span className="font-sans font-bold">{t.saveProfileSuccess}</span>
         </div>
       )}
 
@@ -842,55 +936,44 @@ export const TravelForum: React.FC<TravelForumProps> = ({
       {forumSubTab === 'profile' ? (
         <div className="space-y-4 animate-fade-in font-sans w-full min-w-0 max-w-full overflow-x-hidden">
           
+          {showSaveNotification && (
+            <div id="passport-update-success-alert" className="border border-emerald-500/20 bg-emerald-500/5 text-emerald-800 p-3 text-xs flex items-center gap-2 animate-fade-in">
+              <Check size={14} className="text-emerald-600 flex-shrink-0" />
+              <div className="text-left font-sans">
+                <span className="font-bold block text-emerald-900">
+                  {currentLang === 'zh' ? '资料保存成功！' : 'Passport details updated!'}
+                </span>
+                <span className="text-[10px] text-emerald-700/90 font-mono">
+                  {currentLang === 'zh' ? '您的虚拟旅行者护照已更新并保存在本地浏览器。' : 'Your virtual traveler card has been successfully written to local memory.'}
+                </span>
+              </div>
+            </div>
+          )}
+
           {/* PASSPORT EMBOSSED CARD */}
-          <div className="border border-[#4A463F]/15 bg-[#FCFAF6] relative overflow-hidden p-4 rounded-none shadow-sm flex flex-col gap-4">
+          <div className="border border-[#4A463F]/15 bg-[#FCFAF6] relative overflow-hidden p-4 rounded-none shadow-sm flex flex-col gap-4 pb-5">
             {/* Top Passport Ribbon Decorative element */}
             <div className="absolute top-0 left-0 right-0 h-1 bg-[#C25B4E]" />
             <div className="absolute top-1.5 right-3 text-[8px] font-mono tracking-widest text-[#8C7A6B]/50 uppercase">
               REPUBLIQUE NOMADE
             </div>
 
-            <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4">
-              {/* Avatar Selector */}
-              <div className="flex flex-col items-center gap-2 flex-shrink-0">
-                <div className="w-16 h-16 bg-[#FAF8F5] border-2 border-dashed border-[#4A463F]/20 flex items-center justify-center text-3xl shadow-inner select-none">
-                  {avatar}
-                </div>
-                <span className="text-[9px] font-mono text-[#8C7A6B] uppercase">{t.avatarLabel}</span>
-              </div>
-
-              {/* Identity Form */}
-              <form onSubmit={handleSaveProfile} className="flex-1 space-y-3 w-full min-w-0">
-                <div className="grid grid-cols-1 gap-2.5">
-                  <div className="space-y-0.5">
-                    <label className="block text-[9px] font-mono uppercase tracking-wider text-[#8C7A6B]">
-                      {t.authorLabel}
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={nickname}
-                      onChange={(e) => setNickname(e.target.value)}
-                      className="w-full bg-[#FAF8F5] border border-[#4A463F]/15 px-2.5 py-1 text-xs focus:outline-none focus:border-[#C25B4E]"
-                    />
+            <form onSubmit={handleSaveProfile} className="space-y-4 w-full min-w-0">
+              {/* Avatar Selector and Preset Choices arranged side-by-side cleanly without breaking layout */}
+              <div className="flex items-center gap-4 border-b border-[#4A463F]/10 pb-3.5 mt-1.5">
+                {/* Big Active Avatar Indicator */}
+                <div className="flex flex-col items-center gap-1.5 flex-shrink-0">
+                  <div className="w-14 h-14 bg-[#FAF8F5] border-2 border-dashed border-[#4A463F]/20 flex items-center justify-center text-3xl shadow-inner select-none">
+                    {avatar}
                   </div>
-
-                  <div className="space-y-0.5">
-                    <label className="block text-[9px] font-mono uppercase tracking-wider text-[#8C7A6B]">
-                      {t.profileBioLabel}
-                    </label>
-                    <input
-                      type="text"
-                      value={userBio}
-                      placeholder={t.profileBioPlaceholder}
-                      onChange={(e) => setUserBio(e.target.value)}
-                      className="w-full bg-[#FAF8F5] border border-[#4A463F]/15 px-2.5 py-1.5 text-xs focus:outline-none focus:border-[#C25B4E]"
-                    />
-                  </div>
+                  <span className="text-[8px] font-mono text-[#8C7A6B] uppercase tracking-wide">{t.avatarLabel}</span>
                 </div>
 
-                {/* Avatar Palette Select block */}
-                <div className="space-y-1">
+                {/* Preset List choices */}
+                <div className="flex-1 space-y-1 text-left">
+                  <span className="block text-[8px] font-mono uppercase tracking-wider text-[#8C7A6B]/80 font-bold">
+                    {currentLang === 'zh' ? '点击图标选择您的旅行头像印章' : 'Click stencil to choose travel decal'}
+                  </span>
                   <div className="flex flex-wrap gap-1">
                     {PRESET_AVATARS.map((av) => (
                       <button
@@ -902,8 +985,8 @@ export const TravelForum: React.FC<TravelForumProps> = ({
                         }}
                         className={`w-7 h-7 flex items-center justify-center border transition-all text-sm rounded-none ${
                           avatar === av 
-                            ? 'bg-[#C25B4E] border-[#C25B4E] text-white' 
-                            : 'bg-[#FAF8F5] border-[#4A463F]/10 hover:border-[#4A463F]'
+                            ? 'bg-[#C25B4E] border-[#C25B4E] text-white font-bold' 
+                            : 'bg-[#FAF8F5] border-[#4A463F]/10 hover:border-[#4A463F] hover:bg-[#FAF8F5]'
                         }`}
                       >
                         {av}
@@ -911,17 +994,47 @@ export const TravelForum: React.FC<TravelForumProps> = ({
                     ))}
                   </div>
                 </div>
+              </div>
 
-                <div className="pt-1">
-                  <button
-                    type="submit"
-                    className="px-3 py-1.5 bg-[#4A463F] hover:bg-[#C25B4E] text-white font-mono text-[9.5px] tracking-wider uppercase transition-all cursor-pointer shadow-xs whitespace-nowrap"
-                  >
-                    {t.saveProfileBtn}
-                  </button>
+              {/* Form entries */}
+              <div className="grid grid-cols-1 gap-3.5 text-left">
+                <div className="space-y-1">
+                  <label className="block text-[9px] font-mono uppercase tracking-wider text-[#8C7A6B] font-bold">
+                    {t.authorLabel}
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={nickname}
+                    onChange={(e) => setNickname(e.target.value)}
+                    className="w-full bg-[#FAF8F5] border border-[#4A463F]/15 px-3 py-1.5 text-xs focus:outline-none focus:border-[#C25B4E] rounded-none text-[#4A463F]"
+                  />
                 </div>
-              </form>
-            </div>
+
+                <div className="space-y-1">
+                  <label className="block text-[9px] font-mono uppercase tracking-wider text-[#8C7A6B] font-bold">
+                    {t.profileBioLabel}
+                  </label>
+                  <input
+                    type="text"
+                    value={userBio}
+                    placeholder={t.profileBioPlaceholder}
+                    onChange={(e) => setUserBio(e.target.value)}
+                    className="w-full bg-[#FAF8F5] border border-[#4A463F]/15 px-3 py-1.5 text-xs focus:outline-none focus:border-[#C25B4E] rounded-none text-[#4A463F]"
+                  />
+                </div>
+              </div>
+
+              {/* Submit passport form - Large action button stretching across full card width for maximal click area & zero overlapping */}
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  className="w-full py-2.5 bg-[#4A463F] hover:bg-[#C25B4E] text-[#FCFAF6] font-mono text-[9.5px] tracking-widest uppercase transition-all cursor-pointer font-bold text-center block rounded-none border border-transparent shadow-xs"
+                >
+                  ✨ {t.saveProfileBtn}
+                </button>
+              </div>
+            </form>
           </div>
 
           {/* DYNAMIC NOTIFICATIONS SYSTEM ("看见谁回复了帖子") */}
@@ -978,7 +1091,7 @@ export const TravelForum: React.FC<TravelForumProps> = ({
                 {t.noPostsCreatedYet}
               </div>
             ) : (
-              <div className="space-y-2">
+              <div className="space-y-2 max-h-56 overflow-y-auto pr-1" style={{ scrollbarWidth: 'thin' }}>
                 {myPostsList.map((myPost) => (
                   <div key={myPost.id} className="border border-[#4A463F]/10 p-2.5 bg-[#FCFAF6] flex items-center justify-between gap-3 text-xs w-full min-w-0">
                     <div className="flex-1 min-w-0 pr-1 text-left">
@@ -1004,6 +1117,66 @@ export const TravelForum: React.FC<TravelForumProps> = ({
                 ))}
               </div>
             )}
+          </div>
+
+          {/* MODERATOR OVERRIDE DASHBOARD */}
+          <div className="space-y-3 pt-3 border-t border-[#4A463F]/10">
+            <h4 className="font-serif font-black text-sm text-[#4A463F] flex items-center gap-1.5 border-b border-[#4A463F]/10 pb-1">
+              <ShieldCheck size={13} className="text-[#C25B4E]" />
+              <span>{t.adminModeSetting || "版主管理员功能"}</span>
+            </h4>
+
+            <div className="border border-[#C25B4E]/10 p-3 bg-[#FCFAF6] space-y-2.5 text-left">
+              <div className="flex items-center justify-between gap-3">
+                <div className="space-y-0.5 text-left">
+                  <span className="block text-[11px] font-bold text-[#4A463F]">{t.adminModeEnable || "开启超级管理员权限"}</span>
+                  <span className="block text-[9px] leading-relaxed text-[#8C7A6B] max-w-xs">{t.adminModeDesc}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAdmin(!isAdmin);
+                    triggerAudioTick();
+                  }}
+                  className={`px-3 py-1 text-[9px] font-mono uppercase tracking-wider transition-all cursor-pointer border ${
+                    isAdmin
+                      ? "bg-[#C25B4E] border-[#C25B4E] text-white font-bold"
+                      : "bg-transparent border-[#4A463F]/20 text-[#8C7A6B] hover:border-[#4A463F]"
+                  }`}
+                >
+                  {isAdmin ? (currentLang === 'zh' ? '已启用' : 'ACTIVE') : (currentLang === 'zh' ? '已关闭' : 'INACTIVE')}
+                </button>
+              </div>
+
+              {/* Admin-only destructive action: Delete All Posts */}
+              {isAdmin && (
+                <div className="pt-2 border-t border-[#4A463F]/10 space-y-2 text-left">
+                  <div className="text-[10px] font-mono text-amber-700/90 font-semibold leading-relaxed">
+                    ⚙️ {currentLang === 'zh' ? '超级管理员一键清理工具：' : 'Administrator Flush Controls:'}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      triggerAudioTick();
+                      const msg = currentLang === 'zh' ? '确定要永久【删除并清空】社区内的所有旅行帖子吗？该操作不可逆，将同时清空服务器与本地数据库！' : 'Are you sure you want to permanently FLUSH and DELETE all forum posts across the entire server and client cache? This action is IRREVERSIBLE!';
+                      if (window.confirm(msg)) {
+                        fetch('/api/posts', { method: 'DELETE' })
+                          .then(res => res.json())
+                          .then(() => {
+                            setPosts([]);
+                            localStorage.setItem('travel_community_posts_v3', '[]');
+                          })
+                          .catch(err => console.error("Error clearing all posts:", err));
+                      }
+                    }}
+                    className="w-full py-2 bg-[#C25B4E] hover:bg-[#A34538] text-[#FCFAF6] font-mono text-[9px] uppercase tracking-wider font-bold transition-all flex items-center justify-center gap-1 cursor-pointer"
+                  >
+                    <Trash2 size={11} />
+                    <span>{currentLang === 'zh' ? '一键删除/清空所有帖子' : 'Flush & Delete All Posts'}</span>
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
 
         </div>
@@ -1217,7 +1390,7 @@ export const TravelForum: React.FC<TravelForumProps> = ({
           </div>
 
           {/* Dynamic Feed Post Loop */}
-          <div className="space-y-3 w-full">
+          <div className="space-y-3 w-full max-h-[52vh] sm:max-h-[58vh] overflow-y-auto pr-1" style={{ scrollbarWidth: 'thin' }}>
             {filteredPosts.length === 0 ? (
               <div className="border border-[#4A463F]/15 p-8 text-center bg-[#FCFAF6] font-sans space-y-2 rounded-none">
                 <Info size={24} className="mx-auto text-[#8C7A6B]/50 animate-pulse" />
@@ -1231,7 +1404,7 @@ export const TravelForum: React.FC<TravelForumProps> = ({
                 
                 // Identify ownership safely to render a delete trigger in feed
                 const isMyAuthoredPost = userCreatedIds.includes(post.id);
-                const showDeleteButton = isMyAuthoredPost;
+                const showDeleteButton = isMyAuthoredPost || isAdmin;
 
                 // Long text limit & wordwrap handling ("文字太长会超出帖子")
                 const shouldTruncate = post.content.length > 220;
