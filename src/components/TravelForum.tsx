@@ -21,10 +21,11 @@ import {
   Settings,
   ArrowRight,
   ShieldAlert,
-  ShieldCheck,
   X
 } from 'lucide-react';
 import { TravelPost, PostReply, Country, Landmark } from '../types';
+import { supabase } from '../lib/supabaseClient';
+import { useAuth } from '../contexts/AuthContext';
 
 interface TravelForumProps {
   language: 'en' | 'zh' | string;
@@ -34,6 +35,7 @@ interface TravelForumProps {
   onFocusLandmark: (landmark: Landmark) => void;
   availableLandmarks: Landmark[];
   triggerAudioTick: () => void;
+  onRequireLogin: () => void;
 }
 
 const CATEGORY_ICONS = {
@@ -388,47 +390,18 @@ export const TravelForum: React.FC<TravelForumProps> = ({
   onFocusCountry,
   onFocusLandmark,
   availableLandmarks,
-  triggerAudioTick
+  triggerAudioTick,
+  onRequireLogin
 }) => {
   const currentLang = boardTranslations[language] ? language : 'en';
   const t = boardTranslations[currentLang];
+  const { user } = useAuth();
 
   // Forum View sub-tab state (廣場 Feed OR 個人主页 Profile)
   const [forumSubTab, setForumSubTab] = useState<'feed' | 'profile'>('feed');
 
-  // Posts master database feed list
-  const [posts, setPosts] = useState<TravelPost[]>(() => {
-    const saved = localStorage.getItem('travel_community_posts_v3');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        return [];
-      }
-    }
-    return [];
-  });
-
-  const [isAdmin, setIsAdmin] = useState<boolean>(() => {
-    return localStorage.getItem('travel_admin_mode') === 'true';
-  });
-
-  useEffect(() => {
-    localStorage.setItem('travel_admin_mode', String(isAdmin));
-  }, [isAdmin]);
-
-  // Track post IDs created *by the current user session*
-  const [userCreatedIds, setUserCreatedIds] = useState<string[]>(() => {
-    const saved = localStorage.getItem('my_created_post_ids_v3');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        return [];
-      }
-    }
-    return [];
-  });
+  // Posts master database feed list (loaded from Supabase, see loadFeed below)
+  const [posts, setPosts] = useState<TravelPost[]>([]);
 
   // Custom inline deletion modal trigger (Bypasses iframe alert blockage)
   const [confirmDeleteTarget, setConfirmDeleteTarget] = useState<string | null>(null);
@@ -466,46 +439,58 @@ export const TravelForum: React.FC<TravelForumProps> = ({
   // Visual save flash notification
   const [showSaveNotification, setShowSaveNotification] = useState(false);
 
-  // Synchronize with server on mount and poll for updates so different accounts see each other's posts!
+  // Load the full feed (posts + their replies + like counts) from Supabase,
+  // and figure out which posts the *current logged-in user* has liked.
+  const loadFeed = async () => {
+    const [{ data: postRows, error: postsErr }, { data: replyRows }, { data: likeRows }] = await Promise.all([
+      supabase.from('posts').select('*').order('created_at', { ascending: false }),
+      supabase.from('replies').select('*').order('created_at', { ascending: true }),
+      supabase.from('likes').select('post_id, user_id'),
+    ]);
+
+    if (postsErr || !postRows) {
+      console.error('Error loading posts from Supabase:', postsErr);
+      return;
+    }
+
+    const assembled: TravelPost[] = postRows.map((row: any) => {
+      const repliesForPost: PostReply[] = (replyRows || [])
+        .filter((r: any) => r.post_id === row.id)
+        .map((r: any) => ({
+          id: r.id,
+          author: r.author,
+          content: r.content,
+          createdAt: new Date(r.created_at).getTime(),
+          isLocalExpert: r.is_local_expert,
+        }));
+
+      const likesForPost = (likeRows || []).filter((l: any) => l.post_id === row.id);
+
+      return {
+        id: row.id,
+        title: row.title,
+        content: row.content,
+        author: row.author,
+        createdAt: new Date(row.created_at).getTime(),
+        likes: likesForPost.length,
+        replies: repliesForPost,
+        category: row.category,
+        assignedCountry: row.assigned_country || undefined,
+        assignedLandmark: row.assigned_landmark || undefined,
+        isLikedByUser: user ? likesForPost.some((l: any) => l.user_id === user.id) : false,
+        user_id: row.user_id,
+      };
+    });
+
+    setPosts(assembled);
+  };
+
+  // Load on mount, and re-sync periodically so different accounts see each other's posts/replies/likes
   useEffect(() => {
-    let active = true;
-    const loadPostsFromServer = () => {
-      fetch("/api/posts")
-        .then(r => r.json())
-        .then(data => {
-          if (active && Array.isArray(data)) {
-            // Merge servers-side feed with client-side isLikedByUser state securely
-            setPosts(currentPosts => {
-              return data.map(serverPost => {
-                const existing = currentPosts.find(p => p.id === serverPost.id);
-                return {
-                  ...serverPost,
-                  isLikedByUser: existing ? existing.isLikedByUser : false
-                };
-              });
-            });
-          }
-        })
-        .catch(err => console.error("Error syncing with backend posts api:", err));
-    };
-
-    loadPostsFromServer();
-    const intervalId = setInterval(loadPostsFromServer, 5000);
-
-    return () => {
-      active = false;
-      clearInterval(intervalId);
-    };
-  }, []);
-
-  // Persistence triggers
-  useEffect(() => {
-    localStorage.setItem('travel_community_posts_v3', JSON.stringify(posts));
-  }, [posts]);
-
-  useEffect(() => {
-    localStorage.setItem('my_created_post_ids_v3', JSON.stringify(userCreatedIds));
-  }, [userCreatedIds]);
+    loadFeed();
+    const intervalId = setInterval(loadFeed, 5000);
+    return () => clearInterval(intervalId);
+  }, [user?.id]);
 
   // Handle active globe selection autofill when triggering the create dialog
   useEffect(() => {
@@ -517,7 +502,11 @@ export const TravelForum: React.FC<TravelForumProps> = ({
     }
   }, [selectedCountry, landmarkFocus, isCreating]);
 
-  const handleLike = (postId: string) => {
+  const handleLike = async (postId: string) => {
+    if (!user) {
+      onRequireLogin();
+      return;
+    }
     triggerAudioTick();
     const post = posts.find(p => p.id === postId);
     if (!post) return;
@@ -535,97 +524,84 @@ export const TravelForum: React.FC<TravelForumProps> = ({
       return p;
     }));
 
-    // Send to server
-    fetch(`/api/posts/${postId}/like`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ isLiked: !isLiked })
-    }).catch(err => console.error("Error syncing like on server:", err));
+    // Sync to Supabase
+    if (isLiked) {
+      const { error } = await supabase.from('likes').delete().eq('post_id', postId).eq('user_id', user.id);
+      if (error) console.error('Error removing like:', error);
+    } else {
+      const { error } = await supabase.from('likes').insert({ post_id: postId, user_id: user.id });
+      if (error) console.error('Error adding like:', error);
+    }
   };
 
-  const handleCreatePost = (e: React.FormEvent) => {
+  const handleCreatePost = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!user) {
+      onRequireLogin();
+      return;
+    }
     if (!newTitle.trim() || !newContent.trim()) return;
 
     triggerAudioTick();
-
-    const brandNewId = `post-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const cleanNick = nickname.trim() || t.authorPlaceholder;
 
-    const newPost: TravelPost = {
-      id: brandNewId,
+    const { error } = await supabase.from('posts').insert({
+      user_id: user.id,
       title: newTitle.trim(),
       content: newContent.trim(),
       author: `${avatar} ${cleanNick}`,
-      createdAt: Date.now(),
-      likes: 0,
-      replies: [],
       category: newCategory,
-      assignedCountry: assocCountry || undefined,
-      assignedLandmark: assocLandmark || undefined
-    };
+      assigned_country: assocCountry || null,
+      assigned_landmark: assocLandmark || null,
+    });
 
-    // Optimistically update locally
-    setPosts(prev => [newPost, ...prev]);
-    setUserCreatedIds(prev => [brandNewId, ...prev]);
+    if (error) {
+      console.error('Error creating post:', error);
+      return;
+    }
 
-    // Send to server
-    fetch("/api/posts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(newPost)
-    }).catch(err => console.error("Error posting new post on server:", err));
-    
     // Reset form states
     setNewTitle('');
     setNewContent('');
     setIsCreating(false);
+
+    loadFeed();
   };
 
-  const handleAddReply = (postId: string) => {
+  const handleAddReply = async (postId: string) => {
+    if (!user) {
+      onRequireLogin();
+      return;
+    }
     const replyText = replyInputs[postId];
     if (!replyText || !replyText.trim()) return;
 
     triggerAudioTick();
 
     const cleanNick = nickname.trim() || t.authorPlaceholder;
+    const authorLabel = `${avatar} ${cleanNick}`;
 
-    const newReply: PostReply = {
-      id: `reply-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      author: `${avatar} ${cleanNick}`,
-      content: replyText.trim(),
-      createdAt: Date.now(),
-      isLocalExpert: false
-    };
-
-    // Keep side-effects outside of state transitions
     const post = posts.find(p => p.id === postId);
     const hasExpertMatch = post && post.category === 'ask' && post.replies.filter(r => r.isLocalExpert).length === 0;
 
-    // Optimistically update locally
-    setPosts(prev => prev.map(p => {
-      if (p.id === postId) {
-        return {
-          ...p,
-          replies: [...p.replies, newReply]
-        };
-      }
-      return p;
-    }));
+    const { error } = await supabase.from('replies').insert({
+      post_id: postId,
+      user_id: user.id,
+      author: authorLabel,
+      content: replyText.trim(),
+      is_local_expert: false,
+    });
 
-    // Send reply to server
-    fetch(`/api/posts/${postId}/replies`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        author: newReply.author,
-        content: newReply.content,
-        isLocalExpert: false
-      })
-    }).catch(err => console.error("Error writing reply on server:", err));
+    if (error) {
+      console.error('Error posting reply:', error);
+      return;
+    }
+
+    setReplyInputs(prev => ({ ...prev, [postId]: '' }));
+    loadFeed();
 
     if (hasExpertMatch) {
-      setTimeout(() => {
+      setTimeout(async () => {
         const expertRepliesEn = [
           "As a local living here, I suggest taking Metro Line 2 to detour traffic! Also historical museums are closed on Tuesdays. Make sure to check beforehand.",
           "Nice choice! Try visiting early in the morning around 7:30 AM before tourist buses arrive. The lighting is pristine for photos too!",
@@ -639,45 +615,30 @@ export const TravelForum: React.FC<TravelForumProps> = ({
 
         const presetResp = currentLang === 'zh' ? expertRepliesZh : expertRepliesEn;
         const chosenMsg = presetResp[Math.floor(Math.random() * presetResp.length)];
+        const expertAuthor = currentLang === 'zh' ? "☘️ 当地向导/经验者" : "☘️ Resident Expert";
 
-        const simLocalReply: PostReply = {
-          id: `reply-expert-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          author: currentLang === 'zh' ? "☘️ 当地向导/经验者" : "☘️ Resident Expert",
+        // Defensive: re-check the latest replies before inserting, to avoid double-posting
+        // the expert reply if multiple ticks/renders triggered this timeout.
+        const { data: existingReplies } = await supabase
+          .from('replies')
+          .select('is_local_expert')
+          .eq('post_id', postId);
+
+        if (existingReplies && existingReplies.some((r: any) => r.is_local_expert)) {
+          return;
+        }
+
+        await supabase.from('replies').insert({
+          post_id: postId,
+          user_id: user.id,
+          author: expertAuthor,
           content: chosenMsg,
-          createdAt: Date.now() + 1000,
-          isLocalExpert: true
-        };
+          is_local_expert: true,
+        });
 
-        // Update locally
-        setPosts(currentFeed => currentFeed.map(p => {
-          if (p.id === postId) {
-            // Defensive: ensure multiple timeouts or StrictMode ticks do not add double experts
-            if (p.replies.some(r => r.isLocalExpert)) {
-              return p;
-            }
-            return {
-              ...p,
-              replies: [...p.replies, simLocalReply]
-            };
-          }
-          return p;
-        }));
-
-        // Send simulated expert reply to server as well
-        fetch(`/api/posts/${postId}/replies`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            author: simLocalReply.author,
-            content: simLocalReply.content,
-            isLocalExpert: true
-          })
-        }).catch(err => console.error("Error writing simulated expert reply on server:", err));
-
+        loadFeed();
       }, 1500);
     }
-
-    setReplyInputs(prev => ({ ...prev, [postId]: '' }));
   };
 
   // Safe delete handler - sets target state to invoke elegant local custom confirm modal
@@ -687,7 +648,7 @@ export const TravelForum: React.FC<TravelForumProps> = ({
     setConfirmDeleteTarget(postId);
   };
 
-  const executeDeleteTarget = () => {
+  const executeDeleteTarget = async () => {
     if (!confirmDeleteTarget) return;
     
     triggerAudioTick();
@@ -695,18 +656,17 @@ export const TravelForum: React.FC<TravelForumProps> = ({
 
     // Optimistically update locally
     setPosts(prev => prev.filter(p => p.id !== targetId));
-    setUserCreatedIds(prev => prev.filter(id => id !== targetId));
 
-    // Send DELETE to server
-    fetch(`/api/posts/${targetId}`, {
-      method: "DELETE"
-    }).catch(err => console.error("Error deleting post on server:", err));
+    // Delete from Supabase (RLS ensures only the post's own author can actually delete it)
+    const { error } = await supabase.from('posts').delete().eq('id', targetId);
+    if (error) console.error('Error deleting post:', error);
     
     if (expandedPostId === targetId) {
       setExpandedPostId(null);
     }
     
     setConfirmDeleteTarget(null);
+    loadFeed();
   };
 
   // Save Traveler profile details
@@ -728,7 +688,7 @@ export const TravelForum: React.FC<TravelForumProps> = ({
     }> = [];
 
     posts.forEach(post => {
-      if (userCreatedIds.includes(post.id)) {
+      if (user && post.user_id === user.id) {
         post.replies.forEach(reply => {
           const cleanNick = nickname.trim();
           const authorTrimmed = reply.author.replace(/[\uD800-\uDFFF].\s*/g, '').trim(); 
@@ -743,7 +703,7 @@ export const TravelForum: React.FC<TravelForumProps> = ({
     return list.sort((a,b) => b.reply.createdAt - a.reply.createdAt);
   };
 
-  const myPostsList = posts.filter(p => userCreatedIds.includes(p.id));
+  const myPostsList = posts.filter(p => !!user && p.user_id === user.id);
   const receivedReplies = getRepliesOnMyPosts();
 
   // Filter calculations
@@ -847,7 +807,7 @@ export const TravelForum: React.FC<TravelForumProps> = ({
             </div>
             
             <p className="text-xs text-[#4A463F]/90 leading-relaxed font-sans">
-              {userCreatedIds.includes(confirmDeleteTarget) ? t.deleteConfirm : t.deleteConfirmAdmin}
+              {t.deleteConfirm}
             </p>
 
             <div className="grid grid-cols-2 gap-2 font-mono text-[10px] uppercase tracking-wider">
@@ -1119,66 +1079,6 @@ export const TravelForum: React.FC<TravelForumProps> = ({
             )}
           </div>
 
-          {/* MODERATOR OVERRIDE DASHBOARD */}
-          <div className="space-y-3 pt-3 border-t border-[#4A463F]/10">
-            <h4 className="font-serif font-black text-sm text-[#4A463F] flex items-center gap-1.5 border-b border-[#4A463F]/10 pb-1">
-              <ShieldCheck size={13} className="text-[#C25B4E]" />
-              <span>{t.adminModeSetting || "版主管理员功能"}</span>
-            </h4>
-
-            <div className="border border-[#C25B4E]/10 p-3 bg-[#FCFAF6] space-y-2.5 text-left">
-              <div className="flex items-center justify-between gap-3">
-                <div className="space-y-0.5 text-left">
-                  <span className="block text-[11px] font-bold text-[#4A463F]">{t.adminModeEnable || "开启超级管理员权限"}</span>
-                  <span className="block text-[9px] leading-relaxed text-[#8C7A6B] max-w-xs">{t.adminModeDesc}</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsAdmin(!isAdmin);
-                    triggerAudioTick();
-                  }}
-                  className={`px-3 py-1 text-[9px] font-mono uppercase tracking-wider transition-all cursor-pointer border ${
-                    isAdmin
-                      ? "bg-[#C25B4E] border-[#C25B4E] text-white font-bold"
-                      : "bg-transparent border-[#4A463F]/20 text-[#8C7A6B] hover:border-[#4A463F]"
-                  }`}
-                >
-                  {isAdmin ? (currentLang === 'zh' ? '已启用' : 'ACTIVE') : (currentLang === 'zh' ? '已关闭' : 'INACTIVE')}
-                </button>
-              </div>
-
-              {/* Admin-only destructive action: Delete All Posts */}
-              {isAdmin && (
-                <div className="pt-2 border-t border-[#4A463F]/10 space-y-2 text-left">
-                  <div className="text-[10px] font-mono text-amber-700/90 font-semibold leading-relaxed">
-                    ⚙️ {currentLang === 'zh' ? '超级管理员一键清理工具：' : 'Administrator Flush Controls:'}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      triggerAudioTick();
-                      const msg = currentLang === 'zh' ? '确定要永久【删除并清空】社区内的所有旅行帖子吗？该操作不可逆，将同时清空服务器与本地数据库！' : 'Are you sure you want to permanently FLUSH and DELETE all forum posts across the entire server and client cache? This action is IRREVERSIBLE!';
-                      if (window.confirm(msg)) {
-                        fetch('/api/posts', { method: 'DELETE' })
-                          .then(res => res.json())
-                          .then(() => {
-                            setPosts([]);
-                            localStorage.setItem('travel_community_posts_v3', '[]');
-                          })
-                          .catch(err => console.error("Error clearing all posts:", err));
-                      }
-                    }}
-                    className="w-full py-2 bg-[#C25B4E] hover:bg-[#A34538] text-[#FCFAF6] font-mono text-[9px] uppercase tracking-wider font-bold transition-all flex items-center justify-center gap-1 cursor-pointer"
-                  >
-                    <Trash2 size={11} />
-                    <span>{currentLang === 'zh' ? '一键删除/清空所有帖子' : 'Flush & Delete All Posts'}</span>
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-
         </div>
       ) : (
         /* DISCUSSIONS FORUM FEED VIEW & MAIN BODY LIST */
@@ -1223,6 +1123,10 @@ export const TravelForum: React.FC<TravelForumProps> = ({
           {!isCreating && (
             <button
               onClick={() => {
+                if (!user) {
+                  onRequireLogin();
+                  return;
+                }
                 setIsCreating(true);
                 triggerAudioTick();
               }}
@@ -1403,8 +1307,8 @@ export const TravelForum: React.FC<TravelForumProps> = ({
                 const isExpanded = expandedPostId === post.id;
                 
                 // Identify ownership safely to render a delete trigger in feed
-                const isMyAuthoredPost = userCreatedIds.includes(post.id);
-                const showDeleteButton = isMyAuthoredPost || isAdmin;
+                const isMyAuthoredPost = !!user && post.user_id === user.id;
+                const showDeleteButton = isMyAuthoredPost;
 
                 // Long text limit & wordwrap handling ("文字太长会超出帖子")
                 const shouldTruncate = post.content.length > 220;
