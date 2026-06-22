@@ -82,5 +82,6 @@ export interface TravelPost {
   assignedCountry?: string; // country name if any
   assignedLandmark?: string; // landmark name if any
   isLikedByUser?: boolean;
+  user_id?: string;
 }
 
