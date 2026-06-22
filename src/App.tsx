@@ -33,7 +33,9 @@ import { TRANSLATIONS, LANGUAGE_OPTIONS, Language } from './translations';
 import { LandmarkDetailsModal } from './components/LandmarkDetailsModal';
 import { LANDMARK_DETAILS_DB } from './components/LandmarkArt';
 import { TravelForum } from './components/TravelForum';
-import { MessageSquare } from 'lucide-react';
+import { MessageSquare, LogIn, LogOut } from 'lucide-react';
+import { AuthModal } from './components/AuthModal';
+import { useAuth } from './contexts/AuthContext';
 
 
 // Initial global flight channels (faster default bases)
@@ -64,6 +66,10 @@ export default function App() {
     return (localStorage.getItem('terra_globe_language') as Language) || 'en';
   });
   const [isLangDropdownOpen, setIsLangDropdownOpen] = useState(false);
+
+  // Auth State (Supabase login/logout)
+  const { user, signOut } = useAuth();
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
   const t = TRANSLATIONS[language];
 
@@ -590,6 +596,28 @@ export default function App() {
             <RotateCw size={11} className={autoRotate ? "animate-spin" : ""} style={{ animationDuration: '6s' }} />
             <span>{autoRotate ? t.spinning : t.standby}</span>
           </button>
+
+          {/* Auth Status / Login Button */}
+          {user ? (
+            <button
+              id="global-logout-btn"
+              onClick={signOut}
+              title={user.email || ''}
+              className="flex items-center gap-1.5 px-3 py-1.5 border border-[#4A463F]/20 rounded-none text-[10px] font-mono tracking-widest uppercase text-[#4A463F] hover:bg-black/5 transition-all cursor-pointer"
+            >
+              <LogOut size={11} />
+              <span className="max-w-[120px] truncate hidden sm:inline">{user.email}</span>
+            </button>
+          ) : (
+            <button
+              id="global-login-btn"
+              onClick={() => setIsAuthModalOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#4A463F] text-[#FAF8F5] border border-[#4A463F] rounded-none text-[10px] font-mono tracking-widest uppercase hover:bg-[#3a3730] transition-all cursor-pointer"
+            >
+              <LogIn size={11} />
+              <span>{language === 'zh' ? '登录' : 'Log In'}</span>
+            </button>
+          )}
         </div>
       </header>
 
@@ -826,6 +854,7 @@ export default function App() {
                   }}
                   availableLandmarks={LANDMARKS}
                   triggerAudioTick={() => audioEngine.triggerTick()}
+                  onRequireLogin={() => setIsAuthModalOpen(true)}
                 />
               </div>
             )}
@@ -1697,6 +1726,11 @@ export default function App() {
         onSetFlightOrigin={handleSetFlightOriginFromModal}
         language={language}
       />
+
+      {/* 5. Login / Sign Up Modal */}
+      {isAuthModalOpen && (
+        <AuthModal language={language} onClose={() => setIsAuthModalOpen(false)} />
+      )}
     </div>
   );
 }
