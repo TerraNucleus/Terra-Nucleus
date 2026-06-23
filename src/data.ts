@@ -713,7 +713,7 @@ export function getCountryMeta(name, lang = 'en') {
       geoStructure = "푸른 바다와 산호초, 우뚝 솟은 화산섬 등 경이로운 해양 보물들로 구획되어 있으며, 고유하게 고립 진화된 귀중하고 신비한 동식물 군락을 품고 있습니다.";
       ethnicCulture = "전설적인 바다인들의 후예. 천체 별자리 관측 항해술에 지극히 능숙하며, 바다에 경의를 표하며 정성스럽게 새긴 독특한 문신과 섬세한 양식의 목공예, 아름다운 자연 전승 가요를 보존하고 있습니다.";
     }
-  } else {
+  } else if (lang === 'zh') {
     const capitals = ["首府要塞", "海滨之城", "中心城区", "古老卫城", "高山要地", "枢纽绿洲"];
     cap = capitals[lengthSeed % capitals.length];
     
@@ -740,6 +740,37 @@ export function getCountryMeta(name, lang = 'en') {
     } else if (cont.includes("大洋洲")) {
       geoStructure = "由蔚蓝 of 环礁海岛群 or 高耸的火山岛地貌构成，环绕着极其瑰丽斑斓的珊瑚礁群落，拥有奇特封闭演化的独特海岛动物物种。";
       ethnicCulture = "原住民航海世家。精通星象潮汐与独木舟竞渡，崇拜海洋与风暴神明，以独具魅力的文身刺青艺术、木雕雕刻和战舞歌谣传唱名扬海外。";
+    }
+  } else {
+    // Fallback for any language without dedicated localized content yet
+    // (fr, ms, ar, it, id, th, es, pt, es-MX): show English consistently,
+    // matching the behavior used elsewhere in the app for untranslated content.
+    const capitals = ["Metropolis Hub", "Coastal Anchorage", "Central District", "Ancient Citadel", "Alpine Stronghold", "Oasis Outpost"];
+    cap = capitals[lengthSeed % capitals.length];
+
+    const continents = ["Asia", "Europe", "Africa", "Americas", "Oceania"];
+    cont = continents[(lengthSeed * 3) % continents.length];
+
+    trivia = `This region is part of the global geo-coordinate matrix. Floating inside the orbital sphere, it features resonant ambient chimes upon activation and forms an essential part of human geography.`;
+
+    geoStructure = "A diverse topographic zone featuring moderate flatlands, rolling hills, and rich water basins adapting dynamically to seasonal shifts.";
+    ethnicCulture = "Inhabited by welcoming local communities keeping alive centuries-old folk celebrations, traditional craftsmanship, and unique music styles.";
+
+    if (cont.includes("Asia")) {
+      geoStructure = "A vast geologic terrain containing ancient high mountain ranges, arid semi-desert plateaus, and highly fertile alluvial river valleys.";
+      ethnicCulture = "Rich multi-ethnic tapestry. Celebrated for time-honored family guilds, agricultural grain rites, and distinctive string and percussion instruments.";
+    } else if (cont.includes("Europe")) {
+      geoStructure = "Dominated by mild continental forests, fertile agricultural basins, rolling glacial hills, and deep inlet coastlines with numerous lakes.";
+      ethnicCulture = "Influenced deeply by classical literature and mythology. Famed for ancient stone castles, master watchmaking, and lively seasonal street fairs.";
+    } else if (cont.includes("Africa")) {
+      geoStructure = "An expansive landscape of savannah plains, historic red soil ridges, active rift faults, and ancient oasis networks supporting rich wildlife.";
+      ethnicCulture = "Composed of many traditional tribes. Maintains a close harmony with nature, famous for lively drumming rhythms, symbolic mask arts, and oral storytelling.";
+    } else if (cont.includes("Americas")) {
+      geoStructure = "Features long sandy shorelines in the east, massive volcanic mountain ranges in the west, and sprawling interior grasslands and river valleys.";
+      ethnicCulture = "A vibrant integration of indigenous ancestry and historical immigration. Known for cowboy pioneer spirit, jazz, and diverse street festivals.";
+    } else if (cont.includes("Oceania")) {
+      geoStructure = "Formed by coral reef atolls, high volcanic peaks, and stunning underwater shelf ecosystems with uniquely evolved isolated species.";
+      ethnicCulture = "Descends from legendary seafarers. Renowned for celestial star navigation, ocean reverence, delicate woodcarvings, and tribal songs of natural wonders.";
     }
   }
 
