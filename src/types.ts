@@ -68,6 +68,7 @@ export interface PostReply {
   content: string;
   createdAt: number;
   isLocalExpert?: boolean;
+  user_id?: string;
 }
 
 export interface TravelPost {
