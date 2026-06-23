@@ -102,6 +102,7 @@ const boardTranslations: Record<string, any> = {
     noRepliesReceivedYet: "暂未收到回复。当其他旅人回复您的帖子时，会在这里实时提醒！",
     deleteBtn: "删除",
     deleteConfirm: "确定要永久删除这篇旅行帖子吗？",
+    deleteConfirmReply: "确定要永久删除这条回复吗？",
     whoReplied: "回复了您的帖子",
     repliedAt: "回复于",
     jumpToPost: "点击前往帖子",
@@ -173,6 +174,7 @@ const boardTranslations: Record<string, any> = {
     noRepliesReceivedYet: "No updates yet. When other travelers offer suggestions on your posts, you'll see notifications here!",
     deleteBtn: "Delete",
     deleteConfirm: "Are you sure you want to permanently delete this post?",
+    deleteConfirmReply: "Are you sure you want to permanently delete this reply?",
     whoReplied: "replied to your post",
     repliedAt: "commented at",
     jumpToPost: "View discussion",
@@ -404,7 +406,10 @@ export const TravelForum: React.FC<TravelForumProps> = ({
   const [posts, setPosts] = useState<TravelPost[]>([]);
 
   // Custom inline deletion modal trigger (Bypasses iframe alert blockage)
-  const [confirmDeleteTarget, setConfirmDeleteTarget] = useState<string | null>(null);
+  // Supports deleting either a whole post, or a single reply within a post.
+  const [confirmDeleteTarget, setConfirmDeleteTarget] = useState<
+    { type: 'post'; postId: string } | { type: 'reply'; postId: string; replyId: string } | null
+  >(null);
 
   // User Profile details
   const [nickname, setNickname] = useState<string>(() => {
@@ -462,6 +467,7 @@ export const TravelForum: React.FC<TravelForumProps> = ({
           content: r.content,
           createdAt: new Date(r.created_at).getTime(),
           isLocalExpert: r.is_local_expert,
+          user_id: r.user_id,
         }));
 
       const likesForPost = (likeRows || []).filter((l: any) => l.post_id === row.id);
@@ -645,24 +651,45 @@ export const TravelForum: React.FC<TravelForumProps> = ({
   const requestDeletePost = (postId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     triggerAudioTick();
-    setConfirmDeleteTarget(postId);
+    setConfirmDeleteTarget({ type: 'post', postId });
+  };
+
+  const requestDeleteReply = (postId: string, replyId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    triggerAudioTick();
+    setConfirmDeleteTarget({ type: 'reply', postId, replyId });
   };
 
   const executeDeleteTarget = async () => {
     if (!confirmDeleteTarget) return;
     
     triggerAudioTick();
-    const targetId = confirmDeleteTarget;
 
-    // Optimistically update locally
-    setPosts(prev => prev.filter(p => p.id !== targetId));
+    if (confirmDeleteTarget.type === 'post') {
+      const targetId = confirmDeleteTarget.postId;
 
-    // Delete from Supabase (RLS ensures only the post's own author can actually delete it)
-    const { error } = await supabase.from('posts').delete().eq('id', targetId);
-    if (error) console.error('Error deleting post:', error);
-    
-    if (expandedPostId === targetId) {
-      setExpandedPostId(null);
+      // Optimistically update locally
+      setPosts(prev => prev.filter(p => p.id !== targetId));
+
+      // Delete from Supabase (RLS ensures only the post's own author can actually delete it)
+      const { error } = await supabase.from('posts').delete().eq('id', targetId);
+      if (error) console.error('Error deleting post:', error);
+
+      if (expandedPostId === targetId) {
+        setExpandedPostId(null);
+      }
+    } else {
+      const { postId, replyId } = confirmDeleteTarget;
+
+      // Optimistically update locally
+      setPosts(prev => prev.map(p => {
+        if (p.id !== postId) return p;
+        return { ...p, replies: p.replies.filter(r => r.id !== replyId) };
+      }));
+
+      // Delete from Supabase (RLS ensures only the reply's own author can actually delete it)
+      const { error } = await supabase.from('replies').delete().eq('id', replyId);
+      if (error) console.error('Error deleting reply:', error);
     }
     
     setConfirmDeleteTarget(null);
@@ -807,7 +834,7 @@ export const TravelForum: React.FC<TravelForumProps> = ({
             </div>
             
             <p className="text-xs text-[#4A463F]/90 leading-relaxed font-sans">
-              {t.deleteConfirm}
+              {confirmDeleteTarget.type === 'reply' ? (t.deleteConfirmReply || t.deleteConfirm) : t.deleteConfirm}
             </p>
 
             <div className="grid grid-cols-2 gap-2 font-mono text-[10px] uppercase tracking-wider">
@@ -1448,7 +1475,9 @@ export const TravelForum: React.FC<TravelForumProps> = ({
                         {/* Replies list */}
                         {post.replies.length > 0 && (
                           <div className="space-y-2 border-b border-[#4A463F]/10 pb-3 max-h-56 overflow-y-auto w-full min-w-0" style={{ scrollbarWidth: 'thin' }}>
-                            {post.replies.map((reply) => (
+                            {post.replies.map((reply) => {
+                              const isMyReply = !!user && reply.user_id === user.id;
+                              return (
                               <div key={reply.id} className="p-2 border border-[#4A463F]/5 bg-[#FCFAF6] space-y-1 rounded-sm w-full min-w-0 break-all overflow-x-hidden text-left">
                                 <div className="flex items-center justify-between text-[9px] font-mono text-[#8C7A6B] gap-1">
                                   <span className="flex items-center gap-1 min-w-0 max-w-[70%] truncate">
@@ -1459,11 +1488,24 @@ export const TravelForum: React.FC<TravelForumProps> = ({
                                       </span>
                                     )}
                                   </span>
-                                  <span className="flex-shrink-0">{formatDate(reply.createdAt)}</span>
+                                  <span className="flex items-center gap-1.5 flex-shrink-0">
+                                    <span>{formatDate(reply.createdAt)}</span>
+                                    {isMyReply && (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => requestDeleteReply(post.id, reply.id, e)}
+                                        title={currentLang === 'zh' ? '删除这条回复' : 'Delete this reply'}
+                                        className="text-[#8C7A6B] hover:text-[#C25B4E] transition-colors cursor-pointer"
+                                      >
+                                        <Trash2 size={10} />
+                                      </button>
+                                    )}
+                                  </span>
                                 </div>
                                 <p className="text-[11px] text-[#4A463F] leading-normal break-all overflow-hidden w-full text-left">{reply.content}</p>
                               </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         )}
 
