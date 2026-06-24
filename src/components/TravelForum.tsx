@@ -587,9 +587,6 @@ export const TravelForum: React.FC<TravelForumProps> = ({
     const cleanNick = nickname.trim() || t.authorPlaceholder;
     const authorLabel = `${avatar} ${cleanNick}`;
 
-    const post = posts.find(p => p.id === postId);
-    const hasExpertMatch = post && post.category === 'ask' && post.replies.filter(r => r.isLocalExpert).length === 0;
-
     const { error } = await supabase.from('replies').insert({
       post_id: postId,
       user_id: user.id,
@@ -605,46 +602,6 @@ export const TravelForum: React.FC<TravelForumProps> = ({
 
     setReplyInputs(prev => ({ ...prev, [postId]: '' }));
     loadFeed();
-
-    if (hasExpertMatch) {
-      setTimeout(async () => {
-        const expertRepliesEn = [
-          "As a local living here, I suggest taking Metro Line 2 to detour traffic! Also historical museums are closed on Tuesdays. Make sure to check beforehand.",
-          "Nice choice! Try visiting early in the morning around 7:30 AM before tourist buses arrive. The lighting is pristine for photos too!",
-          "Friendly warning: Do not buy local souvenirs from the immediate street vendors; walk two blocks south to get authentic hand-crafted products at half price!"
-        ];
-        const expertRepliesZh = [
-          "作为当地居民回答你：建议避开周末下午，因为人流会达到峰值！附近商户 and 博物馆周二休息，注意提前核实时间安排。",
-          "非常棒的行程安排！建议在早上7:30前到达景点，彼时晨光柔和最适宜拍摄，还可以避开大批团客包车。",
-          "友情防坑提示：千万不要在主要出入口附近购买推销的挂件；建议折向南边的一条小巷，在传统老手艺人那里只要半价！"
-        ];
-
-        const presetResp = currentLang === 'zh' ? expertRepliesZh : expertRepliesEn;
-        const chosenMsg = presetResp[Math.floor(Math.random() * presetResp.length)];
-        const expertAuthor = currentLang === 'zh' ? "☘️ 当地向导/经验者" : "☘️ Resident Expert";
-
-        // Defensive: re-check the latest replies before inserting, to avoid double-posting
-        // the expert reply if multiple ticks/renders triggered this timeout.
-        const { data: existingReplies } = await supabase
-          .from('replies')
-          .select('is_local_expert')
-          .eq('post_id', postId);
-
-        if (existingReplies && existingReplies.some((r: any) => r.is_local_expert)) {
-          return;
-        }
-
-        await supabase.from('replies').insert({
-          post_id: postId,
-          user_id: user.id,
-          author: expertAuthor,
-          content: chosenMsg,
-          is_local_expert: true,
-        });
-
-        loadFeed();
-      }, 1500);
-    }
   };
 
   // Safe delete handler - sets target state to invoke elegant local custom confirm modal
