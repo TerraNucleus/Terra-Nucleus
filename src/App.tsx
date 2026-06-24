@@ -36,6 +36,7 @@ import { TravelForum } from './components/TravelForum';
 import { MessageSquare, LogIn, LogOut } from 'lucide-react';
 import { AuthModal } from './components/AuthModal';
 import { useAuth } from './contexts/AuthContext';
+import { supabase } from './lib/supabaseClient';
 
 
 // Initial global flight channels (faster default bases)
@@ -70,6 +71,28 @@ export default function App() {
   // Auth State (Supabase login/logout)
   const { user, signOut } = useAuth();
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+
+  // Billboard Ad State - shows a real uploaded ad image when one is active in Supabase,
+  // otherwise falls back to the default "contact us for ads" banner below.
+  const [activeAd, setActiveAd] = useState<{ image_url: string; link_url: string | null; advertiser_name: string | null } | null>(null);
+
+  useEffect(() => {
+    supabase
+      .from('billboard_ad')
+      .select('image_url, link_url, advertiser_name')
+      .eq('is_active', true)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .then(({ data, error }) => {
+        if (error) {
+          console.error('Error loading billboard ad:', error);
+          return;
+        }
+        if (data && data.length > 0) {
+          setActiveAd(data[0]);
+        }
+      });
+  }, []);
 
   const t = TRANSLATIONS[language];
 
@@ -1672,6 +1695,24 @@ export default function App() {
           </div>
 
           {/* Layer 2.5: Globe Metropolis Interactive Ad Billboard (Exactly same length, width & card contour style as bottom HUD) */}
+          {activeAd ? (
+            <a
+              href={activeAd.link_url || undefined}
+              target="_blank"
+              rel="noopener noreferrer sponsored"
+              className="relative z-10 w-full block border border-[#4A463F]/15 rounded-none overflow-hidden bg-[#FCFAF6] group"
+              title={activeAd.advertiser_name || undefined}
+            >
+              <img
+                src={activeAd.image_url}
+                alt={activeAd.advertiser_name || 'Advertisement'}
+                className="w-full h-auto object-cover max-h-[120px] group-hover:opacity-90 transition-opacity"
+              />
+              <span className="absolute top-1 right-1.5 text-[7px] font-mono uppercase tracking-widest bg-black/40 text-white px-1.5 py-0.5 rounded-none select-none">
+                {language === 'zh' ? '广告' : 'Ad'}
+              </span>
+            </a>
+          ) : (
           <div className="relative z-10 w-full flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 bg-[#FCFAF6] border border-[#4A463F]/15 rounded-none p-4 md:py-3.5 md:px-5 font-mono text-[#4A463F] shadow-none select-none">
             <div className="flex items-center gap-3">
               <div className="p-2 rounded-none bg-[#C25B4E]/10 text-[#C25B4E] border border-dashed border-[#C25B4E]/30 animate-pulse shrink-0">
@@ -1701,6 +1742,7 @@ export default function App() {
               </div>
             </div>
           </div>
+          )}
 
           {/* Simple caption text containing the official contact email below the billboard */}
           <div className="relative z-10 w-full text-center mt-1.5 font-mono text-[10px] text-[#4A463F]/50 select-text pb-1">
